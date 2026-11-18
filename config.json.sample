@@ -1,0 +1,7 @@
+{
+    "adafruit_IO": {
+        "user": "Username goes here",
+        "key": "Key goes here",
+        "feed": "Feed name"
+    }
+}
