@@ -1,3 +1,4 @@
+# V8 Added stats summary to X label of graph when showing entire Jan to Dec year.
 # V7 Moved Adafruit IoT parameters to a config.json file in preparation
 #    to upload to github.
 # V6 Major changes starting to load DB and graph multiple date ranges.
@@ -38,7 +39,7 @@ def refresh_display(clicked_button):
     
     global graph_num, graph_year, year_setting, min_year
     
-    conn = sqlite3.connect("air.db", detect_types=sqlite3.PARSE_DECLTYPES)
+    conn = sqlite3.connect("air.db", detect_types=sqlite3.PARSE_DECLTYPES, timeout=30.0)
     cursor = conn.cursor()
 
     # One time only, determine minumum year in DB
@@ -113,9 +114,6 @@ def refresh_display(clicked_button):
     x = [row[0] for row in rows]
     y = [row[1] for row in rows]
 
-    # DB clearnup
-    cursor.close()
-    conn.close()
     # Plot our graph
     ax.clear()  # Must clear so that y max is reset, otherwise, later higher values go up off the plot
     # And because we cleared, we must re-establish these values///
@@ -131,7 +129,33 @@ def refresh_display(clicked_button):
     elif aqi_list[graph_num][1] <= timedelta(days=365) and graph_year == 365:
         ax.set_xlabel(f"Previous {int(aqi_list[graph_num][1].total_seconds() / 86400)} days", fontsize=14)
     else:
-        ax.set_xlabel(f"{graph_year}", fontsize=14)
+        # We are graphing a full year, Jan - Dec.  Get summary for the year.
+        
+        query = "SELECT AVG(pm2_5) FROM readings WHERE time BETWEEN ? AND ?"
+        cursor.execute(query, (start_date, end_date))
+        year_avg = round(cursor.fetchone()[0])
+
+        query = """
+        SELECT
+            strftime('%Y', time) AS year,
+            SUM(CASE WHEN pm2_5 > 150 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN pm2_5 > 250 THEN 1 ELSE 0 END)
+        FROM readings
+        WHERE time BETWEEN ? AND ?
+        GROUP BY year;
+        """
+        cursor.execute(query, (start_date, end_date))
+        results = cursor.fetchone()
+
+        # Divisor used below of 1440 = # of minutes in a day.
+        days_over_150 = results[1] / 1440
+        days_over_250 = results[2] / 1440
+
+        ax.set_xlabel(f"{graph_year}   Average:{year_avg:3.0f},  150+:{days_over_150:5.1f} days,   250+:{days_over_250:5.1f} days", fontsize=14)
+
+    # DB clearnup
+    cursor.close()
+    conn.close()
 
     # Even if there is no earlier data to support it, set the width of
     # the graph to the entire date range
@@ -294,7 +318,11 @@ def get_aqi():
         now = datetime.now()
 
         # Connect to SQL DB
-        conn = sqlite3.connect("air.db", detect_types=sqlite3.PARSE_DECLTYPES)
+        conn = sqlite3.connect("air.db", detect_types=sqlite3.PARSE_DECLTYPES, timeout=30.0)
+        
+        # Allows readers and a single writer to operate at the same time without blocking each other.
+        conn.execute("PRAGMA journal_mode=WAL;")
+        
         cursor = conn.cursor()
 
         cursor.execute(
